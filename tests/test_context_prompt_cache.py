@@ -87,6 +87,7 @@ def test_runtime_context_includes_sender_identity_metadata(tmp_path) -> None:
 
     user_content = messages[-1]["content"]
     assert isinstance(user_content, str)
+    assert "Message ID:" not in user_content
     assert "Sender Tag: alice#1234" in user_content
     assert "Sender Display Name: Alice Server" in user_content
 
@@ -101,20 +102,24 @@ def test_runtime_context_includes_reply_and_recent_channel_messages(tmp_path) ->
         channel="discord",
         chat_id="123",
         metadata={
+            "message_id": "cur-123",
             "reply_display_name": "Bob",
             "reply_tag": "bob#2222",
+            "reply_message_id": "reply-9",
             "reply_content": "Can we ship this today?",
             "recent_messages": [
-                {"display_name": "Alice", "tag": "alice#1111", "content": "We need a fix."},
-                {"display_name": "Carol", "tag": "@carol", "content": "I can test it."},
+                {"display_name": "Alice", "tag": "alice#1111", "message_id": "m1", "content": "We need a fix."},
+                {"display_name": "Carol", "tag": "@carol", "message_id": "m2", "content": "I can test it."},
             ],
         },
     )
 
     user_content = messages[-1]["content"]
     assert isinstance(user_content, str)
+    assert "Message ID: cur-123" in user_content
     assert "Replying To: Bob (bob#2222)" in user_content
+    assert "Replying To Message ID: reply-9" in user_content
     assert "Replying To Message: Can we ship this today?" in user_content
     assert "Recent Channel Messages:" in user_content
-    assert "- Alice (alice#1111): We need a fix." in user_content
-    assert "- Carol (@carol): I can test it." in user_content
+    assert "- Alice (alice#1111) [id: m1]: We need a fix." in user_content
+    assert "- Carol (@carol) [id: m2]: I can test it." in user_content

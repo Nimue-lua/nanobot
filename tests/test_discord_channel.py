@@ -110,11 +110,13 @@ def test_message_create_includes_recent_messages_and_reply_context() -> None:
         msg = await bus.consume_inbound()
         assert msg.metadata["reply_display_name"] == "Carol Server"
         assert msg.metadata["reply_tag"] == "@carol"
+        assert msg.metadata["reply_message_id"] == "ref1"
         assert msg.metadata["reply_content"] == "Original question"
         assert msg.metadata["recent_messages"] == [
             {
                 "display_name": "Bob Server",
                 "tag": "bob#2222",
+                "message_id": "msg0",
                 "content": "Earlier context",
             }
         ]

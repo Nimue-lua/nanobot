@@ -109,6 +109,9 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         if metadata:
+            message_id = metadata.get("message_id")
+            if isinstance(message_id, (str, int)) and str(message_id).strip():
+                lines.append(f"Message ID: {str(message_id).strip()}")
             sender_tag = metadata.get("tag")
             if isinstance(sender_tag, str) and sender_tag.strip():
                 lines.append(f"Sender Tag: {sender_tag.strip()}")
@@ -118,6 +121,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             reply_display_name = metadata.get("reply_display_name")
             reply_tag = metadata.get("reply_tag")
             reply_content = metadata.get("reply_content")
+            reply_message_id = metadata.get("reply_message_id")
             if any(isinstance(v, str) and v.strip() for v in (reply_display_name, reply_tag, reply_content)):
                 reply_identity = " ".join(
                     v.strip()
@@ -129,6 +133,8 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 ).strip()
                 if reply_identity:
                     lines.append(f"Replying To: {reply_identity}")
+                if isinstance(reply_message_id, (str, int)) and str(reply_message_id).strip():
+                    lines.append(f"Replying To Message ID: {str(reply_message_id).strip()}")
                 if isinstance(reply_content, str) and reply_content.strip():
                     lines.append(f"Replying To Message: {reply_content.strip()}")
             recent_messages = metadata.get("recent_messages")
@@ -142,6 +148,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                         continue
                     display_name = item.get("display_name")
                     tag = item.get("tag")
+                    item_message_id = item.get("message_id")
                     identity = " ".join(
                         v.strip()
                         for v in (
@@ -150,8 +157,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                         )
                         if isinstance(v, str) and v.strip()
                     ).strip()
+                    id_suffix = ""
+                    if isinstance(item_message_id, (str, int)) and str(item_message_id).strip():
+                        id_suffix = f" [id: {str(item_message_id).strip()}]"
                     formatted_recent.append(
-                        f"- {identity}: {content.strip()}" if identity else f"- {content.strip()}"
+                        f"- {identity}{id_suffix}: {content.strip()}" if identity else f"-{id_suffix or ' '}: {content.strip()}"
                     )
                 if formatted_recent:
                     lines.append("Recent Channel Messages:")

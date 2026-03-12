@@ -338,13 +338,13 @@ class DiscordChannel(BaseChannel):
             return
 
         if not self.is_allowed(sender_id):
-            self._remember_recent_message(channel_id, display_name, tag, context_preview)
+            self._remember_recent_message(channel_id, display_name, tag, context_preview, str(payload.get("id", "")))
             return
 
         # Check group channel policy (DMs always respond if is_allowed passes)
         if guild_id is not None:
             if not self._should_respond_in_group(payload, content):
-                self._remember_recent_message(channel_id, display_name, tag, context_preview)
+                self._remember_recent_message(channel_id, display_name, tag, context_preview, str(payload.get("id", "")))
                 return
 
         content_parts = [content] if content else []
@@ -392,7 +392,7 @@ class DiscordChannel(BaseChannel):
                 **reply_meta,
             },
         )
-        self._remember_recent_message(channel_id, display_name, tag, context_preview)
+        self._remember_recent_message(channel_id, display_name, tag, context_preview, str(payload.get("id", "")))
 
     @staticmethod
     def _build_author_tag(username: str | None, discriminator: str | None) -> str | None:
@@ -427,6 +427,9 @@ class DiscordChannel(BaseChannel):
         display_name = member.get("nick") or author.get("global_name") or username
         tag = DiscordChannel._build_author_tag(username, discriminator)
         metadata: dict[str, str] = {}
+        reply_message_id = referenced_message.get("id")
+        if isinstance(reply_message_id, str) and reply_message_id.strip():
+            metadata["reply_message_id"] = reply_message_id.strip()
         if isinstance(display_name, str) and display_name.strip():
             metadata["reply_display_name"] = display_name.strip()
         if isinstance(tag, str) and tag.strip():
@@ -448,6 +451,7 @@ class DiscordChannel(BaseChannel):
         display_name: str | None,
         tag: str | None,
         content: str,
+        message_id: str | None = None,
     ) -> None:
         """Store a short recent-message summary for later turns in the same channel."""
         if not channel_id or not content:
@@ -460,6 +464,8 @@ class DiscordChannel(BaseChannel):
             entry["display_name"] = display_name.strip()
         if isinstance(tag, str) and tag.strip():
             entry["tag"] = tag.strip()
+        if isinstance(message_id, str) and message_id.strip():
+            entry["message_id"] = message_id.strip()
         bucket.append(entry)
 
     def _should_respond_in_group(self, payload: dict[str, Any], content: str) -> bool:
