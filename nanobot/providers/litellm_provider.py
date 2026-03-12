@@ -1,5 +1,6 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import asyncio
 import hashlib
 import os
 import secrets
@@ -18,6 +19,11 @@ from nanobot.providers.registry import find_by_model, find_gateway
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
 _ANTHROPIC_EXTRA_KEYS = frozenset({"thinking_blocks"})
 _ALNUM = string.ascii_letters + string.digits
+_OPENROUTER_RETRY_DELAY_SECONDS = 10
+_OPENROUTER_RETRY_ERROR_MARKERS = (
+    "openrouterexception - provider returned error",
+    "openrouterexception: provider returned error",
+)
 
 def _short_tool_id() -> str:
     """Generate a 9-char alphanumeric ID compatible with all providers (incl. Mistral)."""
@@ -170,6 +176,14 @@ class LiteLLMProvider(LLMProvider):
                     kwargs.update(overrides)
                     return
 
+    def _should_retry_openrouter_error(self, error: Exception) -> bool:
+        """Retry a transient OpenRouter provider error exactly once."""
+        if not self._gateway or self._gateway.name != "openrouter":
+            return False
+
+        error_text = str(error).lower()
+        return any(marker in error_text for marker in _OPENROUTER_RETRY_ERROR_MARKERS)
+
     @staticmethod
     def _extra_msg_keys(original_model: str, resolved_model: str) -> frozenset[str]:
         """Return provider-specific extra keys to preserve in request messages."""
@@ -280,15 +294,29 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        try:
-            response = await acompletion(**kwargs)
-            return self._parse_response(response)
-        except Exception as e:
-            # Return error as content for graceful handling
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
+        attempts = 2 if self._gateway and self._gateway.name == "openrouter" else 1
+        last_error: Exception | None = None
+
+        for attempt in range(attempts):
+            try:
+                response = await acompletion(**kwargs)
+                return self._parse_response(response)
+            except Exception as e:
+                last_error = e
+                if attempt == 0 and self._should_retry_openrouter_error(e):
+                    logger.warning(
+                        "OpenRouter provider error from LiteLLM, retrying once in {} seconds",
+                        _OPENROUTER_RETRY_DELAY_SECONDS,
+                    )
+                    await asyncio.sleep(_OPENROUTER_RETRY_DELAY_SECONDS)
+                    continue
+                break
+
+        # Return error as content for graceful handling
+        return LLMResponse(
+            content=f"Error calling LLM: {str(last_error)}",
+            finish_reason="error",
+        )
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""

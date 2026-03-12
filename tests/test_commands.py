@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -147,6 +148,99 @@ def test_litellm_provider_normalizes_assistant_none_content_to_empty_string():
     ])
 
     assert sanitized == [{"role": "assistant", "content": "", "tool_calls": []}]
+
+
+def test_litellm_provider_retries_openrouter_provider_error_once():
+    async def _run():
+        provider = LiteLLMProvider(
+            api_key="sk-or-test",
+            default_model="openrouter/hunter-alpha",
+            provider_name="openrouter",
+        )
+        messages = [{"role": "user", "content": "hello"}]
+
+        first_error = Exception(
+            "litellm.APIError: APIError: OpenrouterException - Provider returned error"
+        )
+        response = MagicMock()
+        response.choices = [MagicMock(message=MagicMock(content="ok"), finish_reason="stop")]
+        response.usage = None
+
+        with patch(
+            "nanobot.providers.litellm_provider.acompletion",
+            new=AsyncMock(side_effect=[first_error, response]),
+        ) as mock_acompletion, patch(
+            "nanobot.providers.litellm_provider.asyncio.sleep",
+            new=AsyncMock(),
+        ) as mock_sleep:
+            result = await provider.chat(messages)
+
+        assert result.content == "ok"
+        assert result.finish_reason == "stop"
+        assert mock_acompletion.await_count == 2
+        mock_sleep.assert_awaited_once_with(10)
+
+    asyncio.run(_run())
+
+
+def test_litellm_provider_returns_error_after_openrouter_retry_fails():
+    async def _run():
+        provider = LiteLLMProvider(
+            api_key="sk-or-test",
+            default_model="openrouter/hunter-alpha",
+            provider_name="openrouter",
+        )
+        messages = [{"role": "user", "content": "hello"}]
+
+        first_error = Exception(
+            "litellm.APIError: APIError: OpenrouterException - Provider returned error"
+        )
+        second_error = Exception(
+            "litellm.APIError: APIError: OpenrouterException - Provider returned error"
+        )
+
+        with patch(
+            "nanobot.providers.litellm_provider.acompletion",
+            new=AsyncMock(side_effect=[first_error, second_error]),
+        ) as mock_acompletion, patch(
+            "nanobot.providers.litellm_provider.asyncio.sleep",
+            new=AsyncMock(),
+        ) as mock_sleep:
+            result = await provider.chat(messages)
+
+        assert result.finish_reason == "error"
+        assert result.content == f"Error calling LLM: {second_error}"
+        assert mock_acompletion.await_count == 2
+        mock_sleep.assert_awaited_once_with(10)
+
+    asyncio.run(_run())
+
+
+def test_litellm_provider_does_not_retry_non_matching_errors():
+    async def _run():
+        provider = LiteLLMProvider(
+            api_key="sk-or-test",
+            default_model="openrouter/hunter-alpha",
+            provider_name="openrouter",
+        )
+        messages = [{"role": "user", "content": "hello"}]
+        error = Exception("litellm.APIError: some other failure")
+
+        with patch(
+            "nanobot.providers.litellm_provider.acompletion",
+            new=AsyncMock(side_effect=error),
+        ) as mock_acompletion, patch(
+            "nanobot.providers.litellm_provider.asyncio.sleep",
+            new=AsyncMock(),
+        ) as mock_sleep:
+            result = await provider.chat(messages)
+
+        assert result.finish_reason == "error"
+        assert result.content == f"Error calling LLM: {error}"
+        assert mock_acompletion.await_count == 1
+        mock_sleep.assert_not_awaited()
+
+    asyncio.run(_run())
 
 
 def test_openai_codex_strip_prefix_supports_hyphen_and_underscore():
