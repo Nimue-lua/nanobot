@@ -71,3 +71,50 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     assert "Channel: cli" in user_content
     assert "Chat ID: direct" in user_content
     assert "Return exactly: OK" in user_content
+
+
+def test_runtime_context_includes_sender_identity_metadata(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    messages = builder.build_messages(
+        history=[],
+        current_message="Who said this?",
+        channel="discord",
+        chat_id="123",
+        metadata={"tag": "alice#1234", "display_name": "Alice Server"},
+    )
+
+    user_content = messages[-1]["content"]
+    assert isinstance(user_content, str)
+    assert "Sender Tag: alice#1234" in user_content
+    assert "Sender Display Name: Alice Server" in user_content
+
+
+def test_runtime_context_includes_reply_and_recent_channel_messages(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    messages = builder.build_messages(
+        history=[],
+        current_message="I agree",
+        channel="discord",
+        chat_id="123",
+        metadata={
+            "reply_display_name": "Bob",
+            "reply_tag": "bob#2222",
+            "reply_content": "Can we ship this today?",
+            "recent_messages": [
+                {"display_name": "Alice", "tag": "alice#1111", "content": "We need a fix."},
+                {"display_name": "Carol", "tag": "@carol", "content": "I can test it."},
+            ],
+        },
+    )
+
+    user_content = messages[-1]["content"]
+    assert isinstance(user_content, str)
+    assert "Replying To: Bob (bob#2222)" in user_content
+    assert "Replying To Message: Can we ship this today?" in user_content
+    assert "Recent Channel Messages:" in user_content
+    assert "- Alice (alice#1111): We need a fix." in user_content
+    assert "- Carol (@carol): I can test it." in user_content

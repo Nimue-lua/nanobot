@@ -97,13 +97,65 @@ Your workspace is at: {workspace_path}
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
 
     @staticmethod
-    def _build_runtime_context(channel: str | None, chat_id: str | None) -> str:
+    def _build_runtime_context(
+        channel: str | None,
+        chat_id: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
         tz = time.strftime("%Z") or "UTC"
         lines = [f"Current Time: {now} ({tz})"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
+        if metadata:
+            sender_tag = metadata.get("tag")
+            if isinstance(sender_tag, str) and sender_tag.strip():
+                lines.append(f"Sender Tag: {sender_tag.strip()}")
+            sender_display_name = metadata.get("display_name")
+            if isinstance(sender_display_name, str) and sender_display_name.strip():
+                lines.append(f"Sender Display Name: {sender_display_name.strip()}")
+            reply_display_name = metadata.get("reply_display_name")
+            reply_tag = metadata.get("reply_tag")
+            reply_content = metadata.get("reply_content")
+            if any(isinstance(v, str) and v.strip() for v in (reply_display_name, reply_tag, reply_content)):
+                reply_identity = " ".join(
+                    v.strip()
+                    for v in (
+                        reply_display_name if isinstance(reply_display_name, str) else "",
+                        f"({reply_tag})" if isinstance(reply_tag, str) and reply_tag.strip() else "",
+                    )
+                    if v
+                ).strip()
+                if reply_identity:
+                    lines.append(f"Replying To: {reply_identity}")
+                if isinstance(reply_content, str) and reply_content.strip():
+                    lines.append(f"Replying To Message: {reply_content.strip()}")
+            recent_messages = metadata.get("recent_messages")
+            if isinstance(recent_messages, list):
+                formatted_recent = []
+                for item in recent_messages:
+                    if not isinstance(item, dict):
+                        continue
+                    content = item.get("content")
+                    if not isinstance(content, str) or not content.strip():
+                        continue
+                    display_name = item.get("display_name")
+                    tag = item.get("tag")
+                    identity = " ".join(
+                        v.strip()
+                        for v in (
+                            display_name if isinstance(display_name, str) else "",
+                            f"({tag})" if isinstance(tag, str) and tag.strip() else "",
+                        )
+                        if isinstance(v, str) and v.strip()
+                    ).strip()
+                    formatted_recent.append(
+                        f"- {identity}: {content.strip()}" if identity else f"- {content.strip()}"
+                    )
+                if formatted_recent:
+                    lines.append("Recent Channel Messages:")
+                    lines.extend(formatted_recent)
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
     def _load_bootstrap_files(self) -> str:
@@ -126,9 +178,10 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
-        runtime_ctx = self._build_runtime_context(channel, chat_id)
+        runtime_ctx = self._build_runtime_context(channel, chat_id, metadata)
         user_content = self._build_user_content(current_message, media)
 
         # Merge runtime context and user content into a single user message

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from nanobot.utils.helpers import split_message
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
 MAX_MESSAGE_LEN = 2000  # Discord message character limit
+RECENT_CONTEXT_MESSAGES = 8
+RECENT_CONTEXT_CHARS = 240
 
 
 class DiscordChannel(BaseChannel):
@@ -35,6 +38,7 @@ class DiscordChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._http: httpx.AsyncClient | None = None
         self._bot_user_id: str | None = None
+        self._recent_messages: dict[str, deque[dict[str, str]]] = {}
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -269,6 +273,7 @@ class DiscordChannel(BaseChannel):
     async def _handle_message_create(self, payload: dict[str, Any]) -> None:
         """Handle incoming Discord messages."""
         author = payload.get("author") or {}
+        member = payload.get("member") or {}
         if author.get("bot"):
             return
 
@@ -276,16 +281,25 @@ class DiscordChannel(BaseChannel):
         channel_id = str(payload.get("channel_id", ""))
         content = payload.get("content") or ""
         guild_id = payload.get("guild_id")
+        username = author.get("username")
+        discriminator = author.get("discriminator")
+        display_name = member.get("nick") or author.get("global_name") or username
+        tag = self._build_author_tag(username, discriminator)
+        context_preview = self._build_context_preview(payload)
+        recent_messages = self._get_recent_messages(channel_id)
+        reply_meta = self._build_reply_metadata(payload.get("referenced_message"))
 
         if not sender_id or not channel_id:
             return
 
         if not self.is_allowed(sender_id):
+            self._remember_recent_message(channel_id, display_name, tag, context_preview)
             return
 
         # Check group channel policy (DMs always respond if is_allowed passes)
         if guild_id is not None:
             if not self._should_respond_in_group(payload, content):
+                self._remember_recent_message(channel_id, display_name, tag, context_preview)
                 return
 
         content_parts = [content] if content else []
@@ -326,8 +340,82 @@ class DiscordChannel(BaseChannel):
                 "message_id": str(payload.get("id", "")),
                 "guild_id": guild_id,
                 "reply_to": reply_to,
+                "username": username,
+                "display_name": display_name,
+                "tag": tag,
+                "recent_messages": recent_messages,
+                **reply_meta,
             },
         )
+        self._remember_recent_message(channel_id, display_name, tag, context_preview)
+
+    @staticmethod
+    def _build_author_tag(username: str | None, discriminator: str | None) -> str | None:
+        """Build a Discord-style author tag from username and discriminator."""
+        if not username:
+            return None
+        if discriminator and discriminator != "0":
+            return f"{username}#{discriminator}"
+        return f"@{username}"
+
+    @staticmethod
+    def _build_context_preview(payload: dict[str, Any]) -> str:
+        """Build a text preview suitable for recent-conversation context."""
+        parts: list[str] = []
+        if content := (payload.get("content") or "").strip():
+            parts.append(content)
+        for attachment in payload.get("attachments") or []:
+            filename = attachment.get("filename") or "attachment"
+            parts.append(f"[attachment: {filename}]")
+        preview = "\n".join(parts).strip() or "[empty message]"
+        return preview[:RECENT_CONTEXT_CHARS]
+
+    @staticmethod
+    def _build_reply_metadata(referenced_message: dict[str, Any] | None) -> dict[str, str]:
+        """Extract reply target metadata when Discord includes the referenced message."""
+        if not isinstance(referenced_message, dict):
+            return {}
+        author = referenced_message.get("author") or {}
+        member = referenced_message.get("member") or {}
+        username = author.get("username")
+        discriminator = author.get("discriminator")
+        display_name = member.get("nick") or author.get("global_name") or username
+        tag = DiscordChannel._build_author_tag(username, discriminator)
+        metadata: dict[str, str] = {}
+        if isinstance(display_name, str) and display_name.strip():
+            metadata["reply_display_name"] = display_name.strip()
+        if isinstance(tag, str) and tag.strip():
+            metadata["reply_tag"] = tag.strip()
+        content = DiscordChannel._build_context_preview(referenced_message)
+        if content:
+            metadata["reply_content"] = content
+        return metadata
+
+    def _get_recent_messages(self, channel_id: str) -> list[dict[str, str]]:
+        """Return recent non-bot channel messages collected before the current turn."""
+        if not channel_id:
+            return []
+        return list(self._recent_messages.get(channel_id, ()))
+
+    def _remember_recent_message(
+        self,
+        channel_id: str,
+        display_name: str | None,
+        tag: str | None,
+        content: str,
+    ) -> None:
+        """Store a short recent-message summary for later turns in the same channel."""
+        if not channel_id or not content:
+            return
+        bucket = self._recent_messages.setdefault(
+            channel_id, deque(maxlen=RECENT_CONTEXT_MESSAGES)
+        )
+        entry: dict[str, str] = {"content": content}
+        if isinstance(display_name, str) and display_name.strip():
+            entry["display_name"] = display_name.strip()
+        if isinstance(tag, str) and tag.strip():
+            entry["tag"] = tag.strip()
+        bucket.append(entry)
 
     def _should_respond_in_group(self, payload: dict[str, Any], content: str) -> bool:
         """Check if bot should respond in a group channel based on policy."""

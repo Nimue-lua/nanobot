@@ -129,6 +129,26 @@ def test_litellm_provider_canonicalizes_github_copilot_hyphen_prefix():
     assert resolved == "github_copilot/gpt-5.3-codex"
 
 
+def test_litellm_provider_preserves_openrouter_namespaced_model_ids():
+    provider = LiteLLMProvider(
+        api_key="sk-or-test",
+        default_model="openrouter/hunter-alpha",
+        provider_name="openrouter",
+    )
+
+    resolved = provider._resolve_model("openrouter/hunter-alpha")
+
+    assert resolved == "openrouter/openrouter/hunter-alpha"
+
+
+def test_litellm_provider_normalizes_assistant_none_content_to_empty_string():
+    sanitized = LiteLLMProvider._sanitize_messages([
+        {"role": "assistant", "content": None, "tool_calls": []}
+    ])
+
+    assert sanitized == [{"role": "assistant", "content": "", "tool_calls": []}]
+
+
 def test_openai_codex_strip_prefix_supports_hyphen_and_underscore():
     assert _strip_model_prefix("openai-codex/gpt-5.1-codex") == "gpt-5.1-codex"
     assert _strip_model_prefix("openai_codex/gpt-5.1-codex") == "gpt-5.1-codex"

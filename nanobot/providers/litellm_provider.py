@@ -93,6 +93,17 @@ class LiteLLMProvider(LLMProvider):
             prefix = self._gateway.litellm_prefix
             if self._gateway.strip_model_prefix:
                 model = model.split("/")[-1]
+            # LiteLLM treats the leading `openrouter/` as its provider route and
+            # strips it before sending the upstream model name. Real OpenRouter
+            # model IDs can themselves start with `openrouter/`, so preserve that
+            # namespace by routing as `openrouter/openrouter/<model>`.
+            if (
+                self._gateway.name == "openrouter"
+                and prefix
+                and model.startswith(f"{prefix}/")
+                and not model.startswith(f"{prefix}/{prefix}/")
+            ):
+                model = f"{prefix}/{model}"
             if prefix and not model.startswith(f"{prefix}/"):
                 model = f"{prefix}/{model}"
             return model
