@@ -5,6 +5,7 @@ import json
 from collections import deque
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -85,6 +86,18 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord HTTP client not initialized")
             return
 
+        if msg.metadata.get("discord_action") == "add_reaction":
+            message_id = msg.metadata.get("message_id")
+            emoji = msg.metadata.get("emoji")
+            if not isinstance(message_id, str) or not message_id:
+                logger.warning("Discord reaction missing message_id")
+                return
+            if not isinstance(emoji, str) or not emoji:
+                logger.warning("Discord reaction missing emoji")
+                return
+            await self._add_reaction(msg.chat_id, message_id, emoji)
+            return
+
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}
 
@@ -140,6 +153,38 @@ class DiscordChannel(BaseChannel):
             except Exception as e:
                 if attempt == 2:
                     logger.error("Error sending Discord message: {}", e)
+                else:
+                    await asyncio.sleep(1)
+        return False
+
+    async def _add_reaction(self, channel_id: str, message_id: str, emoji: str) -> bool:
+        """Add a reaction to a Discord message via REST API."""
+        if not self._http:
+            logger.warning("Discord HTTP client not initialized")
+            return False
+
+        encoded_emoji = quote(emoji, safe="")
+        url = (
+            f"{DISCORD_API_BASE}/channels/{channel_id}/messages/"
+            f"{message_id}/reactions/{encoded_emoji}/@me"
+        )
+        headers = {"Authorization": f"Bot {self.config.token}"}
+
+        for attempt in range(3):
+            try:
+                response = await self._http.put(url, headers=headers)
+                if response.status_code == 429:
+                    data = response.json()
+                    retry_after = float(data.get("retry_after", 1.0))
+                    logger.warning("Discord rate limited, retrying reaction in {}s", retry_after)
+                    await asyncio.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+                logger.debug("Discord reaction added: {} -> {}", emoji, message_id)
+                return True
+            except Exception as e:
+                if attempt == 2:
+                    logger.error("Error adding Discord reaction {} to {}: {}", emoji, message_id, e)
                 else:
                     await asyncio.sleep(1)
         return False

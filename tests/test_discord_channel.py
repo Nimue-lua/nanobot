@@ -1,7 +1,9 @@
 import asyncio
 from types import SimpleNamespace
+from urllib.parse import quote
 
 from nanobot.bus.queue import MessageBus
+from nanobot.bus.events import OutboundMessage
 from nanobot.channels.discord import DiscordChannel
 from nanobot.config.schema import DiscordConfig
 
@@ -115,6 +117,49 @@ def test_message_create_includes_recent_messages_and_reply_context() -> None:
                 "tag": "bob#2222",
                 "content": "Earlier context",
             }
+        ]
+
+    asyncio.run(_run())
+
+
+def test_send_adds_discord_reaction_from_metadata() -> None:
+    class _Response:
+        status_code = 204
+
+        def raise_for_status(self) -> None:
+            return None
+
+    async def _run() -> None:
+        config = DiscordConfig(token="token", allow_from=["user1"], group_policy="open")
+        bus = MessageBus()
+        channel = DiscordChannel(config, bus)
+
+        put_calls: list[tuple[str, dict[str, str]]] = []
+
+        async def _put(url: str, headers: dict[str, str]) -> _Response:
+            put_calls.append((url, headers))
+            return _Response()
+
+        channel._http = SimpleNamespace(put=_put)
+
+        await channel.send(
+            OutboundMessage(
+                channel="discord",
+                chat_id="chan1",
+                content="",
+                metadata={
+                    "discord_action": "add_reaction",
+                    "message_id": "msg1",
+                    "emoji": "👍",
+                },
+            )
+        )
+
+        assert put_calls == [
+            (
+                f"https://discord.com/api/v10/channels/chan1/messages/msg1/reactions/{quote('👍', safe='')}/@me",
+                {"Authorization": "Bot token"},
+            )
         ]
 
     asyncio.run(_run())
