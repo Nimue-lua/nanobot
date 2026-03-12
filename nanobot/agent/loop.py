@@ -66,10 +66,12 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        shutdown_callback: Callable[[], Awaitable[None]] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
         self.channels_config = channels_config
+        self.shutdown_callback = shutdown_callback
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
@@ -270,7 +272,10 @@ class AgentLoop:
             except asyncio.TimeoutError:
                 continue
 
-            if msg.content.strip().lower() == "/stop":
+            command = msg.content.strip().lower()
+            if command == "/stop":
+                await self._handle_shutdown(msg)
+            elif command == "/cancel":
                 await self._handle_stop(msg)
             else:
                 task = asyncio.create_task(self._dispatch(msg))
@@ -292,6 +297,16 @@ class AgentLoop:
         await self.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))
+
+    async def _handle_shutdown(self, msg: InboundMessage) -> None:
+        """Stop the full bot process."""
+        await self.bus.publish_outbound(
+            OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="Stopping bot...")
+        )
+        if self.shutdown_callback:
+            await self.shutdown_callback()
+        else:
+            self.stop()
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message under the global lock."""
@@ -393,7 +408,7 @@ class AgentLoop:
                                   content="New session started.")
         if cmd == "/help":
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands")
+                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/cancel — Stop the current task\n/stop — Stop the bot\n/help — Show available commands")
 
         unconsolidated = len(session.messages) - session.last_consolidated
         if (unconsolidated >= self.memory_window and session.key not in self._consolidating):

@@ -340,6 +340,7 @@ def gateway(
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
+        shutdown_callback=None,
     )
 
     # Set cron callback (needs agent)
@@ -448,14 +449,32 @@ def gateway(
 
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
 
+    stop_requested = asyncio.Event()
+
+    async def _request_shutdown() -> None:
+        stop_requested.set()
+
+    agent.shutdown_callback = _request_shutdown
+
     async def run():
+        agent_task: asyncio.Task | None = None
+        channels_task: asyncio.Task | None = None
+        stop_task: asyncio.Task | None = None
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
+            agent_task = asyncio.create_task(agent.run())
+            channels_task = asyncio.create_task(channels.start_all())
+            stop_task = asyncio.create_task(stop_requested.wait())
+
+            done, pending = await asyncio.wait(
+                {agent_task, channels_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            for task in done:
+                task.result()
+            for task in pending:
+                task.cancel()
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
@@ -464,6 +483,15 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
+            for task in (agent_task, channels_task, stop_task):
+                if task is None:
+                    continue
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
 
     asyncio.run(run())
 
