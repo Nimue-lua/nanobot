@@ -46,6 +46,11 @@ class TestMessageToolSuppressLogic:
 
         assert len(sent) == 1
         assert result is None  # suppressed
+        session = loop.sessions.get_or_create("feishu:chat123")
+        assert any(
+            m.get("role") == "assistant" and m.get("content") == "Hello"
+            for m in session.messages
+        )
 
     @pytest.mark.asyncio
     async def test_not_suppress_when_sent_to_different_target(self, tmp_path: Path) -> None:
@@ -73,6 +78,9 @@ class TestMessageToolSuppressLogic:
         assert sent[0].channel == "email"
         assert result is not None  # not suppressed
         assert result.channel == "feishu"
+        target_session = loop.sessions.get_or_create("email:user@example.com")
+        assert target_session.messages[-1]["role"] == "assistant"
+        assert target_session.messages[-1]["content"] == "Email content"
 
     @pytest.mark.asyncio
     async def test_not_suppress_when_no_message_tool_used(self, tmp_path: Path) -> None:
@@ -127,6 +135,8 @@ class TestMessageToolTurnTracking:
 
     def test_start_turn_resets(self) -> None:
         tool = MessageTool()
+        tool._sent_messages = [OutboundMessage(channel="feishu", chat_id="chat1", content="Hi")]
         tool._sent_in_turn = True
         tool.start_turn()
         assert not tool._sent_in_turn
+        assert tool._sent_messages == []

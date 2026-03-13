@@ -374,6 +374,7 @@ class AgentLoop:
             )
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
+            self._mirror_sent_messages(session)
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             return OutboundMessage(channel=channel, chat_id=chat_id,
@@ -452,6 +453,7 @@ class AgentLoop:
             final_content = "I've completed processing but have no response to give."
 
         self._save_turn(session, all_msgs, 1 + len(history))
+        self._mirror_sent_messages(session)
         self.sessions.save(session)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
@@ -499,6 +501,26 @@ class AgentLoop:
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
         session.updated_at = datetime.now()
+
+    def _mirror_sent_messages(self, source_session: Session) -> None:
+        """Persist successful message-tool sends into the destination sessions."""
+        from datetime import datetime
+
+        mt = self.tools.get("message")
+        if not isinstance(mt, MessageTool):
+            return
+
+        for outbound in mt._sent_messages:
+            key = f"{outbound.channel}:{outbound.chat_id}"
+            target_session = source_session if source_session.key == key else self.sessions.get_or_create(key)
+            target_session.messages.append({
+                "role": "assistant",
+                "content": outbound.content,
+                "timestamp": datetime.now().isoformat(),
+            })
+            target_session.updated_at = datetime.now()
+            if target_session is not source_session:
+                self.sessions.save(target_session)
 
     async def process_direct(
         self,
