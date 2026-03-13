@@ -96,6 +96,44 @@ def test_message_create_accepts_bot_authors() -> None:
     asyncio.run(_run())
 
 
+def test_message_create_ignores_self_messages() -> None:
+    async def _run() -> None:
+        config = DiscordConfig(token="token", allow_from=["bot-user"], group_policy="open")
+        bus = MessageBus()
+        channel = DiscordChannel(config, bus)
+        channel._http = SimpleNamespace()
+        channel._bot_user_id = "bot-user"
+
+        async def _noop(_channel_id: str) -> None:
+            return None
+
+        channel._start_typing = _noop
+
+        payload = {
+            "id": "msg1",
+            "channel_id": "chan1",
+            "guild_id": "guild1",
+            "content": "<@bot-user> hello again",
+            "author": {
+                "id": "bot-user",
+                "bot": True,
+                "username": "helperbot",
+                "discriminator": "0",
+                "global_name": "Helper Bot",
+            },
+            "mentions": [{"id": "bot-user"}],
+            "member": {},
+            "attachments": [],
+        }
+
+        await channel._handle_message_create(payload)
+
+        assert bus.inbound_size == 0
+        assert channel._get_recent_messages("chan1") == []
+
+    asyncio.run(_run())
+
+
 def test_build_author_tag_supports_modern_discord_usernames() -> None:
     assert DiscordChannel._build_author_tag("alice", "0") == "@alice"
     assert DiscordChannel._build_author_tag("alice", None) == "@alice"

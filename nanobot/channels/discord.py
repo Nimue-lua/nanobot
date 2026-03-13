@@ -354,6 +354,10 @@ class DiscordChannel(BaseChannel):
         if not sender_id or not channel_id:
             return
 
+        if self._bot_user_id and sender_id == self._bot_user_id:
+            logger.debug("Ignoring Discord self-message {}", payload.get("id"))
+            return
+
         if guild_id is None:
             self._dm_channels_by_user[sender_id] = channel_id
 
