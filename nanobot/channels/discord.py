@@ -40,6 +40,7 @@ class DiscordChannel(BaseChannel):
         self._http: httpx.AsyncClient | None = None
         self._bot_user_id: str | None = None
         self._recent_messages: dict[str, deque[dict[str, str]]] = {}
+        self._dm_channels_by_user: dict[str, str] = {}
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -98,7 +99,12 @@ class DiscordChannel(BaseChannel):
             await self._add_reaction(msg.chat_id, message_id, emoji)
             return
 
-        url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
+        channel_id = await self._resolve_outbound_channel_id(msg.chat_id)
+        if not channel_id:
+            logger.error("Unable to resolve Discord target {}", msg.chat_id)
+            return
+
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}
 
         try:
@@ -337,6 +343,9 @@ class DiscordChannel(BaseChannel):
         if not sender_id or not channel_id:
             return
 
+        if guild_id is None:
+            self._dm_channels_by_user[sender_id] = channel_id
+
         if not self.is_allowed(sender_id):
             self._remember_recent_message(channel_id, display_name, tag, context_preview, str(payload.get("id", "")))
             return
@@ -513,3 +522,62 @@ class DiscordChannel(BaseChannel):
         task = self._typing_tasks.pop(channel_id, None)
         if task:
             task.cancel()
+
+    async def _resolve_outbound_channel_id(self, target_id: str) -> str | None:
+        """Resolve an outbound target to a Discord channel ID."""
+        if not target_id or not self._http:
+            return target_id or None
+
+        if dm_channel_id := self._dm_channels_by_user.get(target_id):
+            return dm_channel_id
+
+        if await self._is_accessible_channel(target_id):
+            return target_id
+
+        dm_channel_id = await self._create_dm_channel(target_id)
+        if dm_channel_id:
+            self._dm_channels_by_user[target_id] = dm_channel_id
+            return dm_channel_id
+
+        return None
+
+    async def _is_accessible_channel(self, channel_id: str) -> bool:
+        """Return True when Discord confirms the bot can address the channel."""
+        if not self._http:
+            return False
+
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}"
+        headers = {"Authorization": f"Bot {self.config.token}"}
+        try:
+            response = await self._http.get(url, headers=headers)
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning("Failed checking Discord channel {}: {}", channel_id, e)
+            return False
+
+    async def _create_dm_channel(self, user_id: str) -> str | None:
+        """Create or fetch a DM channel for a Discord user ID."""
+        if not self._http:
+            return None
+
+        url = f"{DISCORD_API_BASE}/users/@me/channels"
+        headers = {"Authorization": f"Bot {self.config.token}"}
+        try:
+            response = await self._http.post(
+                url,
+                headers=headers,
+                json={"recipient_id": user_id},
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json()
+            channel_id = data.get("id")
+            if isinstance(channel_id, str) and channel_id:
+                return channel_id
+        except Exception as e:
+            logger.warning("Failed creating Discord DM channel for {}: {}", user_id, e)
+        return None
