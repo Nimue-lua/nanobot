@@ -123,6 +123,25 @@ class TestMessageToolSuppressLogic:
             ('read_file("foo.txt")', True),
         ]
 
+    @pytest.mark.asyncio
+    async def test_repeated_identical_tool_calls_abort(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(
+            id="call1", name="exec", arguments={"command": "echo hi > out.txt"},
+        )
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+            content=None,
+            tool_calls=[tool_call],
+            reasoning_content="retrying",
+        ))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        loop.tools.execute = AsyncMock(return_value="Exit code: 0")
+
+        final_content, _, _ = await loop._run_agent_loop([])
+
+        assert "repeating the same tool call" in (final_content or "")
+        assert loop.tools.execute.await_count == 2
+
 
 class TestMessageToolTurnTracking:
 

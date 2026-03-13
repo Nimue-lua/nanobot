@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,13 @@ class ExecTool(Tool):
                 if stderr_text.strip():
                     output_parts.append(f"STDERR:\n{stderr_text}")
 
+            artifact_lines = self._summarize_artifacts(command, cwd)
+            if artifact_lines:
+                output_parts.append("Artifacts:\n" + "\n".join(artifact_lines))
+
+            if not output_parts:
+                output_parts.append("(command completed successfully with no stdout/stderr)")
+
             output_parts.append(f"\nExit code: {process.returncode}")
 
             result = "\n".join(output_parts) if output_parts else "(no output)"
@@ -170,6 +178,62 @@ class ExecTool(Tool):
                     return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None
+
+    @staticmethod
+    def _summarize_artifacts(command: str, cwd: str) -> list[str]:
+        """Best-effort summary of obvious output file paths mentioned in the command."""
+        lines: list[str] = []
+        seen: set[Path] = set()
+        for path in ExecTool._extract_output_paths(command, cwd):
+            if path in seen or not path.exists() or not path.is_file():
+                continue
+            seen.add(path)
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = -1
+            size_part = f"{size} bytes" if size >= 0 else "size unknown"
+            lines.append(f"- {path} ({size_part})")
+        return lines
+
+    @staticmethod
+    def _extract_output_paths(command: str, cwd: str) -> list[Path]:
+        """Extract obvious output-file arguments such as `-o file` or `> file`."""
+        paths: list[Path] = []
+
+        try:
+            tokens = shlex.split(command, posix=True)
+        except ValueError:
+            tokens = command.split()
+
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            candidate: str | None = None
+            if token in {"-o", "--output"} and i + 1 < len(tokens):
+                candidate = tokens[i + 1]
+                i += 1
+            elif token.startswith("--output="):
+                candidate = token.split("=", 1)[1]
+            elif token in {">", "1>"} and i + 1 < len(tokens):
+                candidate = tokens[i + 1]
+                i += 1
+
+            if candidate:
+                paths.append(ExecTool._resolve_output_path(candidate, cwd))
+            i += 1
+
+        for match in re.findall(r"(?:^|[ \t])(?:>|1>)[ \t]*([^\s;&|]+)", command):
+            paths.append(ExecTool._resolve_output_path(match, cwd))
+
+        return paths
+
+    @staticmethod
+    def _resolve_output_path(raw_path: str, cwd: str) -> Path:
+        path = Path(os.path.expandvars(raw_path)).expanduser()
+        if not path.is_absolute():
+            path = Path(cwd) / path
+        return path.resolve()
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:

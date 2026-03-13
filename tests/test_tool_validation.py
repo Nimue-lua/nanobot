@@ -404,3 +404,11 @@ async def test_exec_timeout_capped_at_max() -> None:
     # Should not raise — just clamp to 600
     result = await tool.execute(command="echo ok", timeout=9999)
     assert "Exit code: 0" in result
+
+
+async def test_exec_reports_output_artifacts(tmp_path) -> None:
+    """Commands that only write files should still report the artifact."""
+    tool = ExecTool(working_dir=str(tmp_path))
+    result = await tool.execute(command="printf 'hello' > out.txt")
+    assert "out.txt" in result
+    assert "bytes" in result

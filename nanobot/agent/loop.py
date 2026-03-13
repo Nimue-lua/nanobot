@@ -47,6 +47,7 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
+    _MAX_IDENTICAL_TOOL_REPEATS = 3
     _PERSISTED_USER_METADATA_KEYS = (
         "message_id",
         "guild_id",
@@ -192,6 +193,26 @@ class AgentLoop:
             return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
+    @staticmethod
+    def _preview_text(value: str | None, limit: int = 2_000) -> str | None:
+        """Return a bounded log preview for model content."""
+        if not value:
+            return None
+        return value if len(value) <= limit else value[:limit] + "... (truncated)"
+
+    @classmethod
+    def _log_llm_response(cls, response: Any) -> None:
+        """Log model-facing output for debugging tool loops."""
+        if clean := cls._preview_text(cls._strip_think(response.content)):
+            logger.info("Assistant: {}", clean)
+        if reasoning := cls._preview_text(response.reasoning_content):
+            logger.info("Reasoning: {}", reasoning)
+        if response.thinking_blocks:
+            logger.info(
+                "Thinking blocks: {}",
+                cls._preview_text(json.dumps(response.thinking_blocks, ensure_ascii=False)),
+            )
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -202,6 +223,8 @@ class AgentLoop:
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        repeated_tool_signature: str | None = None
+        repeated_tool_count = 0
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -213,6 +236,7 @@ class AgentLoop:
                 tools=tool_defs,
                 model=self.model,
             )
+            self._log_llm_response(response)
 
             if response.has_tool_calls:
                 if on_progress:
@@ -234,11 +258,33 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    tool_signature = f"{tool_call.name}:{args_str}"
+                    if tool_signature == repeated_tool_signature:
+                        repeated_tool_count += 1
+                    else:
+                        repeated_tool_signature = tool_signature
+                        repeated_tool_count = 1
+                    if repeated_tool_count >= self._MAX_IDENTICAL_TOOL_REPEATS:
+                        logger.warning(
+                            "Aborting repeated tool loop after {} identical calls: {}({})",
+                            repeated_tool_count,
+                            tool_call.name,
+                            args_str[:200],
+                        )
+                        final_content = (
+                            f"I stopped because I was repeating the same tool call "
+                            f"`{tool_call.name}` without making progress."
+                        )
+                        break
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result_preview = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+                    logger.info("Tool result [{}]: {}", tool_call.name, self._preview_text(result_preview))
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                if final_content is not None:
+                    break
             else:
                 clean = self._strip_think(response.content)
                 # Don't persist error responses to session history — they can
