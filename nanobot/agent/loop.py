@@ -511,7 +511,8 @@ class AgentLoop:
             return
 
         for outbound in mt._sent_messages:
-            key = f"{outbound.channel}:{outbound.chat_id}"
+            target_chat_id = str(outbound.metadata.get("resolved_chat_id") or outbound.chat_id)
+            key = f"{outbound.channel}:{target_chat_id}"
             target_session = source_session if source_session.key == key else self.sessions.get_or_create(key)
             target_session.messages.append({
                 "role": "assistant",

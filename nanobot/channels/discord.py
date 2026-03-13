@@ -104,6 +104,7 @@ class DiscordChannel(BaseChannel):
         if not channel_id:
             logger.error("Unable to resolve Discord target {}", msg.chat_id)
             return
+        msg.metadata["resolved_chat_id"] = channel_id
 
         url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}

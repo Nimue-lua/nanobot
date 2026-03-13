@@ -251,9 +251,8 @@ def test_send_creates_dm_channel_when_target_is_user_id() -> None:
 
         channel._http = SimpleNamespace(get=_get, post=_post)
 
-        await channel.send(
-            OutboundMessage(channel="discord", chat_id="user2", content="hello")
-        )
+        outbound = OutboundMessage(channel="discord", chat_id="user2", content="hello")
+        await channel.send(outbound)
 
         assert get_calls == [
             (
@@ -273,6 +272,7 @@ def test_send_creates_dm_channel_when_target_is_user_id() -> None:
                 {"content": "hello"},
             ),
         ]
+        assert outbound.metadata["resolved_chat_id"] == "dm1"
 
     asyncio.run(_run())
 
@@ -327,9 +327,8 @@ def test_send_reuses_cached_dm_channel_from_inbound_dm() -> None:
         get_calls.clear()
         post_calls.clear()
 
-        await channel.send(
-            OutboundMessage(channel="discord", chat_id="user1", content="reply")
-        )
+        outbound = OutboundMessage(channel="discord", chat_id="user1", content="reply")
+        await channel.send(outbound)
 
         assert get_calls == []
         assert post_calls == [
@@ -339,5 +338,6 @@ def test_send_reuses_cached_dm_channel_from_inbound_dm() -> None:
                 {"content": "reply"},
             )
         ]
+        assert outbound.metadata["resolved_chat_id"] == "dm1"
 
     asyncio.run(_run())
