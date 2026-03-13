@@ -338,8 +338,6 @@ class DiscordChannel(BaseChannel):
         """Handle incoming Discord messages."""
         author = payload.get("author") or {}
         member = payload.get("member") or {}
-        if author.get("bot"):
-            return
 
         sender_id = str(author.get("id", ""))
         channel_id = str(payload.get("channel_id", ""))
