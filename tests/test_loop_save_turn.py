@@ -53,3 +53,29 @@ def test_save_turn_keeps_tool_results_under_16k() -> None:
     )
 
     assert session.messages[0]["content"] == content
+
+
+def test_save_turn_persists_selected_inbound_metadata_on_user_message() -> None:
+    loop = _mk_loop()
+    session = Session(key="discord:123")
+    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
+
+    loop._save_turn(
+        session,
+        [{"role": "user", "content": f"{runtime}\n\nhello"}],
+        skip=0,
+        inbound_metadata={
+            "message_id": "m-1",
+            "display_name": "Alice Server",
+            "tag": "@alice",
+            "username": "alice",
+            "recent_messages": [{"content": "not persisted"}],
+        },
+    )
+
+    assert session.messages[0]["content"] == "hello"
+    assert session.messages[0]["message_id"] == "m-1"
+    assert session.messages[0]["display_name"] == "Alice Server"
+    assert session.messages[0]["tag"] == "@alice"
+    assert session.messages[0]["username"] == "alice"
+    assert "recent_messages" not in session.messages[0]

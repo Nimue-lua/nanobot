@@ -47,6 +47,18 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
+    _PERSISTED_USER_METADATA_KEYS = (
+        "message_id",
+        "guild_id",
+        "reply_to",
+        "username",
+        "display_name",
+        "tag",
+        "reply_message_id",
+        "reply_display_name",
+        "reply_tag",
+        "reply_content",
+    )
 
     def __init__(
         self,
@@ -373,7 +385,7 @@ class AgentLoop:
                 metadata=msg.metadata,
             )
             final_content, _, all_msgs = await self._run_agent_loop(messages)
-            self._save_turn(session, all_msgs, 1 + len(history))
+            self._save_turn(session, all_msgs, 1 + len(history), inbound_metadata=msg.metadata)
             self._mirror_sent_messages(session)
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -452,7 +464,7 @@ class AgentLoop:
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        self._save_turn(session, all_msgs, 1 + len(history))
+        self._save_turn(session, all_msgs, 1 + len(history), inbound_metadata=msg.metadata)
         self._mirror_sent_messages(session)
         self.sessions.save(session)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -467,9 +479,16 @@ class AgentLoop:
             metadata=msg.metadata or {},
         )
 
-    def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
+    def _save_turn(
+        self,
+        session: Session,
+        messages: list[dict],
+        skip: int,
+        inbound_metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Save new-turn messages into session, truncating large tool results."""
         from datetime import datetime
+        user_metadata_persisted = False
         for m in messages[skip:]:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
@@ -498,6 +517,12 @@ class AgentLoop:
                     if not filtered:
                         continue
                     entry["content"] = filtered
+                if not user_metadata_persisted:
+                    for key in self._PERSISTED_USER_METADATA_KEYS:
+                        value = (inbound_metadata or {}).get(key)
+                        if value is not None:
+                            entry[key] = value
+                    user_metadata_persisted = True
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
         session.updated_at = datetime.now()

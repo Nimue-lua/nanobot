@@ -106,8 +106,23 @@ class MemoryStore:
             if not message.get("content"):
                 continue
             tools = f" [tools: {', '.join(message['tools_used'])}]" if message.get("tools_used") else ""
+            identity = ""
+            display_name = message.get("display_name")
+            tag = message.get("tag")
+            if message.get("role") == "user" and (
+                (isinstance(display_name, str) and display_name.strip())
+                or (isinstance(tag, str) and tag.strip())
+            ):
+                identity = " " + " ".join(
+                    part
+                    for part in (
+                        display_name.strip() if isinstance(display_name, str) and display_name.strip() else "",
+                        f"({tag.strip()})" if isinstance(tag, str) and tag.strip() else "",
+                    )
+                    if part
+                )
             lines.append(
-                f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{tools}: {message['content']}"
+                f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{identity}{tools}: {message['content']}"
             )
         return "\n".join(lines)
 
