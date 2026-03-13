@@ -218,6 +218,12 @@ def test_send_posts_to_accessible_discord_channel() -> None:
                 {"content": "hello"},
             )
         ]
+        assert channel._get_recent_messages("chan1") == [
+            {
+                "display_name": "Discord",
+                "content": "hello",
+            }
+        ]
 
     asyncio.run(_run())
 
@@ -273,6 +279,12 @@ def test_send_creates_dm_channel_when_target_is_user_id() -> None:
             ),
         ]
         assert outbound.metadata["resolved_chat_id"] == "dm1"
+        assert channel._get_recent_messages("dm1") == [
+            {
+                "display_name": "Discord",
+                "content": "hello",
+            }
+        ]
 
     asyncio.run(_run())
 
@@ -339,5 +351,9 @@ def test_send_reuses_cached_dm_channel_from_inbound_dm() -> None:
             )
         ]
         assert outbound.metadata["resolved_chat_id"] == "dm1"
+        assert channel._get_recent_messages("dm1")[-1] == {
+            "display_name": "Discord",
+            "content": "reply",
+        }
 
     asyncio.run(_run())

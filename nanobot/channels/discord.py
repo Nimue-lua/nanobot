@@ -112,11 +112,13 @@ class DiscordChannel(BaseChannel):
         try:
             sent_media = False
             failed_media: list[str] = []
+            sent_any = False
 
             # Send file attachments first
             for media_path in msg.media or []:
                 if await self._send_file(url, headers, media_path, reply_to=msg.reply_to):
                     sent_media = True
+                    sent_any = True
                 else:
                     failed_media.append(Path(media_path).name)
 
@@ -140,6 +142,15 @@ class DiscordChannel(BaseChannel):
 
                 if not await self._send_payload(url, headers, payload):
                     break  # Abort remaining chunks on failure
+                sent_any = True
+
+            if sent_any:
+                self._remember_recent_message(
+                    channel_id,
+                    self.display_name,
+                    None,
+                    self._build_outbound_preview(msg),
+                )
         finally:
             await self._stop_typing(msg.chat_id)
 
@@ -423,6 +434,17 @@ class DiscordChannel(BaseChannel):
         for attachment in payload.get("attachments") or []:
             filename = attachment.get("filename") or "attachment"
             parts.append(f"[attachment: {filename}]")
+        preview = "\n".join(parts).strip() or "[empty message]"
+        return preview[:RECENT_CONTEXT_CHARS]
+
+    @staticmethod
+    def _build_outbound_preview(msg: OutboundMessage) -> str:
+        """Build a short preview for a sent outbound message."""
+        parts: list[str] = []
+        if (msg.content or "").strip():
+            parts.append(msg.content.strip())
+        for media_path in msg.media or []:
+            parts.append(f"[attachment: {Path(media_path).name}]")
         preview = "\n".join(parts).strip() or "[empty message]"
         return preview[:RECENT_CONTEXT_CHARS]
 
